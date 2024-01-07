@@ -23,11 +23,11 @@ var (
 )
 
 type Patient struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty"`
-	FullName       string             `bson:"full_name"`
-	Email          string             `bson:"email"`
-	CPF            string             `bson:"cpf"`
-	PhoneNumber    string             `bson:"phone_number"`
+	ID             primitive.ObjectID   `bson:"_id,omitempty"`
+	FullName       string               `bson:"full_name"`
+	Email          string               `bson:"email"`
+	CPF            string               `bson:"cpf"`
+	PhoneNumber    string               `bson:"phone_number"`
 	HealthPostIDs  []primitive.ObjectID `bson:"health_post_ids"`
 }
 
@@ -53,19 +53,19 @@ func main() {
 
 	router.LoadHTMLGlob("./templates/*")
 
+	// Set the default route to index.html
+	router.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", gin.H{})
+	})
 
-    // Set the default route to index.html
-    router.GET("/", func(c *gin.Context) {
-        c.HTML(http.StatusOK, "index.html", gin.H{})
-    })
+	// Use /register to show the form and register the user
+	router.GET("/register", showForm)
+	router.POST("/register", registerUser)
 
-    // Use /register to show the form and register the user
-    router.GET("/register", showForm)
-    router.POST("/register", registerUser)
-
-    // Add other routes as needed
-    router.GET("/profile/:id", displayProfile)
-    router.POST("/add-health-post/:id", addHealthPost)
+	// Add other routes as needed
+	router.GET("/profile/:id", displayProfile)
+	router.POST("/add-health-post/:id", addHealthPost)
+	router.GET("/list-patients", listPatients)
 
 	router.Run(":8080")
 }
@@ -136,6 +136,21 @@ func registerUser(c *gin.Context) {
 	cpf := c.PostForm("cpf")
 	phoneNumber := c.PostForm("phone_number")
 
+	// Check if the CPF already exists
+	existingPatientCursor, err := collection.Find(nil, bson.M{"cpf": cpf})
+	if err != nil {
+		log.Println(err)
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": "Internal Server Error"})
+		return
+	}
+
+	if existingPatientCursor.Next(nil) {
+		// If the cursor has a next document, the CPF already exists
+		c.HTML(http.StatusBadRequest, "error.html", gin.H{"error": "CPF ja cadastrado!"})
+		return
+	}
+
+	// If the code reaches here, the CPF is unique, and we can proceed with registration
 	result, err := collection.InsertOne(nil, bson.M{
 		"full_name":      fullName,
 		"email":          email,
@@ -152,6 +167,40 @@ func registerUser(c *gin.Context) {
 	patientID := result.InsertedID.(primitive.ObjectID)
 	c.Redirect(http.StatusSeeOther, "/profile/"+patientID.Hex())
 }
+
+func listPatients(c *gin.Context) {
+    // Fetch all patients from the database
+    patients, err := getAllPatients()
+    if err != nil {
+        log.Println(err)
+        c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": "Internal Server Error"})
+        return
+    }
+
+    // Render the list of patients template
+    c.HTML(http.StatusOK, "list_patients.html", gin.H{"patients": patients})
+}
+
+func getAllPatients() ([]Patient, error) {
+	var patients []Patient
+
+	cursor, err := collection.Find(nil, bson.M{})
+	if err != nil {
+		return patients, err
+	}
+	defer cursor.Close(nil)
+
+	for cursor.Next(nil) {
+		var patient Patient
+		if err := cursor.Decode(&patient); err != nil {
+			return patients, err
+		}
+		patients = append(patients, patient)
+	}
+
+	return patients, nil
+}
+
 
 func displayProfile(c *gin.Context) {
 	patientID := c.Param("id")
@@ -179,10 +228,6 @@ func displayProfile(c *gin.Context) {
 	c.HTML(http.StatusOK, "profile.html", gin.H{"patient": patient, "healthPosts": healthPosts})
 }
 
-
-
-
-
 func addHealthPost(c *gin.Context) {
 	patientID := c.Param("id")
 
@@ -201,6 +246,7 @@ func addHealthPost(c *gin.Context) {
 
 	c.Redirect(http.StatusSeeOther, "/profile/"+url.QueryEscape(patientID))
 }
+
 
 
 
